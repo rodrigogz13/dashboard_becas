@@ -365,3 +365,23 @@ html, body { height: 100%; font-family: 'Inter', system-ui, sans-serif; font-siz
   transition: background var(--transition), color var(--transition);
 }
 .btn-logout:hover { background: rgba(255,255,255,.08); color: #f1f5f9; }
+
+/* ============================================================
+   CONTROL DE ROLES
+   can-financial  → visible para admin y financiero
+   can-records    → visible para admin y operativo
+   ============================================================ */
+
+/* financiero: no puede registrar ni editar datos personales */
+body.rol-financiero .can-records  { display: none !important; }
+
+/* operativo: no puede ver Bolsa ni campos económicos */
+body.rol-operativo  .can-financial { display: none !important; }
+
+/* Configuración — secciones específicas por rol */
+body.rol-financiero .cfg-periodo    { display: none !important; } /* financiero NO ve Periodo */
+body.rol-operativo  .cfg-presupuesto { display: none !important; } /* operativo NO ve Presupuesto */
+
+/* admin-only: reservado para uso futuro */
+body.rol-financiero .admin-only { display: none !important; }
+body.rol-operativo  .admin-only { display: none !important; }

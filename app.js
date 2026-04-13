@@ -21,44 +21,31 @@ const TIPO_COLORS = {
 
 const TIPOS_BAJA  = ['Voluntaria', 'Tácita'];
 const STATUS_LIST = ['Activo', 'Baja', 'Suspendido'];
-const DB_KEY      = 'becas_db';
-const CFG_KEY     = 'becas_cfg';
-const CREDS_KEY   = 'becas_creds';
-const AUTH_KEY    = 'becas_auth';
-const DB_VERSION  = 3; // bump to reset old localStorage
+const AUTH_KEY = 'becas_token';
 
 /* ============================================================
-   STORAGE
+   API HELPER
    ============================================================ */
-function loadDB() {
-  try {
-    const r = localStorage.getItem(DB_KEY);
-    if (!r) return defaultDB();
-    const p = JSON.parse(r);
-    if (p.version !== DB_VERSION) return defaultDB(); // reset on schema change
-    return p;
-  } catch { return defaultDB(); }
+function getToken() { return sessionStorage.getItem(AUTH_KEY); }
+function isLoggedIn() { return !!getToken(); }
+
+async function apiFetch(url, options = {}) {
+  const token = getToken();
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    }
+  });
+  if (res.status === 401) { logout(); return null; }
+  return res;
 }
-function saveDB() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 
-function loadCfg() {
-  try { const r = localStorage.getItem(CFG_KEY); return r ? JSON.parse(r) : defaultCfg(); }
-  catch { return defaultCfg(); }
-}
-function saveCfg() { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
-
-function defaultCfg() { return { bolsaGlobal: 1150000, periodo: 'Agosto - Diciembre 2025' }; }
-
-function loadCreds() {
-  try { const r = localStorage.getItem(CREDS_KEY); return r ? JSON.parse(r) : defaultCreds(); }
-  catch { return defaultCreds(); }
-}
-function saveCreds(c) { localStorage.setItem(CREDS_KEY, JSON.stringify(c)); }
-function defaultCreds() { return { usuario: 'admin', password: 'becas2025' }; }
-
-/* Auth */
-function isLoggedIn() { return sessionStorage.getItem(AUTH_KEY) === '1'; }
-
+/* ============================================================
+   AUTH UI
+   ============================================================ */
 function showLoginScreen() {
   document.getElementById('login-screen').style.display = '';
   document.getElementById('app-layout').style.display = 'none';
@@ -73,81 +60,61 @@ function showApp() {
   document.getElementById('app-layout').style.display = '';
 }
 
-function handleLogin(e) {
+async function handleLogin(e) {
   e.preventDefault();
-  const creds = loadCreds();
-  const user  = document.getElementById('login-user').value.trim();
-  const pass  = document.getElementById('login-pass').value;
-  if (user === creds.usuario && pass === creds.password) {
-    sessionStorage.setItem(AUTH_KEY, '1');
-    showApp();
-    navigate('inicio');
-  } else {
+  const usuario  = document.getElementById('login-user').value.trim();
+  const password = document.getElementById('login-pass').value;
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usuario, password })
+    });
+    if (!res.ok) {
+      document.getElementById('login-error').style.display = '';
+      document.getElementById('login-pass').value = '';
+      document.getElementById('login-pass').focus();
+      return;
+    }
+    const data = await res.json();
+    sessionStorage.setItem(AUTH_KEY, data.token);
+    currentUser = { usuario: data.usuario, rol: data.rol };
+    await initApp();
+  } catch {
     document.getElementById('login-error').style.display = '';
-    document.getElementById('login-pass').value = '';
-    document.getElementById('login-pass').focus();
   }
 }
 
 function logout() {
   sessionStorage.removeItem(AUTH_KEY);
+  currentUser = null;
   showLoginScreen();
 }
 
+/* ============================================================
+   DATA LOADER
+   ============================================================ */
+async function loadData() {
+  const [bRes, cRes] = await Promise.all([
+    apiFetch('/api/beneficiarios'),
+    apiFetch('/api/config')
+  ]);
+  if (!bRes || !cRes) return false;
+  db.beneficiarios = await bRes.json();
+  cfg = await cRes.json();
+  return true;
+}
+
 function defaultDB() {
-  return {
-    version: DB_VERSION,
-    nextId: 6,
-    beneficiarios: [
-      {
-        id:1, folio:'25-NI-0001', nombre:'Juan Pérez López',
-        curp:'PELA900101HDFRPN09', correo:'jperez@ejemplo.com',
-        telAlumno:'5512345678', telFam1:'5598765432', telFam2:'',
-        tipo:'Nuevo ingreso', estatus:'Baja', tipoBaja:'Voluntaria',
-        montoAutorizado:15000, montoDerogado:0,
-        chequeFecha:'', chequeCantidad:0, chequeFolio:''
-      },
-      {
-        id:2, folio:'25-CT-0001', nombre:'María García Hernández',
-        curp:'GAHM920315MDFRRL08', correo:'mgarcia@ejemplo.com',
-        telAlumno:'5523456789', telFam1:'5534567890', telFam2:'',
-        tipo:'Carrera Trunca', estatus:'Baja', tipoBaja:'Tácita',
-        montoAutorizado:12000, montoDerogado:0,
-        chequeFecha:'', chequeCantidad:0, chequeFolio:''
-      },
-      {
-        id:3, folio:'25-TI-0001', nombre:'Carlos Rodríguez Sánchez',
-        curp:'ROSC850622HDFRGR03', correo:'crodriguez@ejemplo.com',
-        telAlumno:'5545678901', telFam1:'5590000000', telFam2:'',
-        tipo:'Titulación', estatus:'Activo', tipoBaja:'',
-        montoAutorizado:20000, montoDerogado:0,
-        chequeFecha:'2025-01-15', chequeCantidad:20000, chequeFolio:'CHQ-0001'
-      },
-      {
-        id:4, folio:'25-TP-0001', nombre:'Ana Martínez Flores',
-        curp:'MAFA950712MDFRLN02', correo:'amartinez@ejemplo.com',
-        telAlumno:'5556789012', telFam1:'5567890123', telFam2:'5578901234',
-        tipo:'Titulación Posgrado', estatus:'Activo', tipoBaja:'',
-        montoAutorizado:25000, montoDerogado:0,
-        chequeFecha:'2025-01-20', chequeCantidad:25000, chequeFolio:'CHQ-0002'
-      },
-      {
-        id:5, folio:'25-CI-0001', nombre:'Roberto Sánchez Díaz',
-        curp:'SADR901128HDFRBN01', correo:'rsanchez@ejemplo.com',
-        telAlumno:'5589012345', telFam1:'5590123456', telFam2:'',
-        tipo:'Carrera Inconclusa', estatus:'Suspendido', tipoBaja:'',
-        montoAutorizado:18000, montoDerogado:0,
-        chequeFecha:'', chequeCantidad:0, chequeFolio:''
-      }
-    ]
-  };
+  return { beneficiarios: [] };
 }
 
 /* ============================================================
    STATE
    ============================================================ */
-let db  = loadDB();
-let cfg = loadCfg();
+let db          = defaultDB();
+let cfg         = { bolsaGlobal: 0, periodo: '' };
+let currentUser = null;
 let buscarEditId  = null;
 let buscarQuery   = '';
 let reporteFilter = 'Todos';
@@ -220,8 +187,9 @@ function updateFolioPreview(tipo, inputId) {
 /* ============================================================
    ROUTER
    ============================================================ */
-function navigate(page) {
+async function navigate(page) {
   buscarEditId = null; buscarQuery = ''; reporteFilter = 'Todos';
+  await loadData();
   document.querySelectorAll('.nav-item').forEach(el =>
     el.classList.toggle('active', el.dataset.page === page)
   );
@@ -634,40 +602,42 @@ function openEditPanel(id) {
         </div>
       </div>
 
-      <p class="edit-section-label">Montos</p>
-      <div class="form-group">
-        <label>Monto Autorizado <span class="field-hint">(fijo)</span></label>
-        <div class="input-prefix-wrap">
-          <span class="input-prefix">$</span>
-          <input type="number" name="montoAutorizado" value="${b.montoAutorizado}"
-            min="0" step="0.01" class="has-prefix"/>
+      <div class="can-financial">
+        <p class="edit-section-label">Montos</p>
+        <div class="form-group">
+          <label>Monto Autorizado <span class="field-hint">(fijo)</span></label>
+          <div class="input-prefix-wrap">
+            <span class="input-prefix">$</span>
+            <input type="number" name="montoAutorizado" value="${b.montoAutorizado}"
+              min="0" step="0.01" class="has-prefix"/>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Monto Derogado <span class="field-hint">(actualizable)</span></label>
-        <div class="input-prefix-wrap">
-          <span class="input-prefix">$</span>
-          <input type="number" name="montoDerogado" value="${b.montoDerogado}"
-            min="0" step="0.01" class="has-prefix"/>
+        <div class="form-group">
+          <label>Monto Derogado <span class="field-hint">(actualizable)</span></label>
+          <div class="input-prefix-wrap">
+            <span class="input-prefix">$</span>
+            <input type="number" name="montoDerogado" value="${b.montoDerogado}"
+              min="0" step="0.01" class="has-prefix"/>
+          </div>
         </div>
-      </div>
 
-      <p class="edit-section-label">Cheque</p>
-      <div class="form-group">
-        <label>Fecha</label>
-        <input type="date" name="chequeFecha" value="${esc(b.chequeFecha)}"/>
-      </div>
-      <div class="form-group">
-        <label>Cantidad</label>
-        <div class="input-prefix-wrap">
-          <span class="input-prefix">$</span>
-          <input type="number" name="chequeCantidad" value="${b.chequeCantidad || ''}"
-            min="0" step="0.01" class="has-prefix" placeholder="0.00"/>
+        <p class="edit-section-label">Cheque</p>
+        <div class="form-group">
+          <label>Fecha</label>
+          <input type="date" name="chequeFecha" value="${esc(b.chequeFecha)}"/>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Folio del Cheque</label>
-        <input type="text" name="chequeFolio" value="${esc(b.chequeFolio)}" placeholder="CHQ-0001"/>
+        <div class="form-group">
+          <label>Cantidad</label>
+          <div class="input-prefix-wrap">
+            <span class="input-prefix">$</span>
+            <input type="number" name="chequeCantidad" value="${b.chequeCantidad || ''}"
+              min="0" step="0.01" class="has-prefix" placeholder="0.00"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Folio del Cheque</label>
+          <input type="text" name="chequeFolio" value="${esc(b.chequeFolio)}" placeholder="CHQ-0001"/>
+        </div>
       </div>
 
       <div class="edit-form-actions">
@@ -903,7 +873,7 @@ function pageConfig() {
     </header>
 
     <form id="form-config" autocomplete="off" style="display:flex;flex-direction:column;gap:16px">
-      <div class="config-card">
+      <div class="config-card cfg-presupuesto">
         <div class="config-card-header">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
           <div>
@@ -916,12 +886,12 @@ function pageConfig() {
           <div class="input-prefix-wrap">
             <span class="input-prefix">$</span>
             <input type="number" name="bolsaGlobal" value="${cfg.bolsaGlobal}"
-              min="0" step="1000" class="has-prefix" required/>
+              min="0" step="1000" class="has-prefix"/>
           </div>
         </div>
       </div>
 
-      <div class="config-card">
+      <div class="config-card cfg-periodo">
         <div class="config-card-header">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           <div>
@@ -981,15 +951,14 @@ function pageConfig() {
 /* ============================================================
    HANDLERS
    ============================================================ */
-function handleRegistrar(e) {
+async function handleRegistrar(e) {
   e.preventDefault();
-  const fd = new FormData(e.target);
+  const fd    = new FormData(e.target);
   const folio = fd.get('folio').trim();
   if (!folio) { showToast('Selecciona un Tipo de beca para generar el folio.', false); return; }
 
   const estatus = fd.get('estatus');
   const b = {
-    id:              db.nextId++,
     folio,
     nombre:          fd.get('nombre').trim(),
     curp:            fd.get('curp').trim().toUpperCase(),
@@ -1006,13 +975,24 @@ function handleRegistrar(e) {
     chequeCantidad:  parseFloat(fd.get('chequeCantidad'))  || 0,
     chequeFolio:     fd.get('chequeFolio').trim(),
   };
-  db.beneficiarios.push(b);
-  saveDB();
-  showToast(`Beneficiario "${b.nombre}" registrado — Folio: ${b.folio}`);
-  navigate('buscar');
+  try {
+    const res = await apiFetch('/api/beneficiarios', {
+      method: 'POST', body: JSON.stringify(b)
+    });
+    if (!res) return;
+    if (!res.ok) {
+      const err = await res.json();
+      showToast(err.error || 'Error al registrar.', false); return;
+    }
+    const nuevo = await res.json();
+    showToast(`Beneficiario "${nuevo.nombre}" registrado — Folio: ${nuevo.folio}`);
+    navigate('buscar');
+  } catch {
+    showToast('Error de conexión con el servidor.', false);
+  }
 }
 
-function handleEditSave(e, id) {
+async function handleEditSave(e, id) {
   e.preventDefault();
   const fd  = new FormData(e.target);
   const idx = db.beneficiarios.findIndex(x => x.id === id);
@@ -1021,9 +1001,9 @@ function handleEditSave(e, id) {
   const estatusAnterior = db.beneficiarios[idx].estatus;
   const estatusNuevo    = fd.get('estatus');
   const nombreB         = fd.get('nombre').trim();
+  const montoAut        = parseFloat(fd.get('montoAutorizado')) || 0;
 
-  db.beneficiarios[idx] = {
-    ...db.beneficiarios[idx],
+  const b = {
     nombre:          nombreB,
     curp:            fd.get('curp').trim().toUpperCase(),
     correo:          fd.get('correo').trim(),
@@ -1033,59 +1013,89 @@ function handleEditSave(e, id) {
     tipo:            fd.get('tipo'),
     estatus:         estatusNuevo,
     tipoBaja:        estatusNuevo === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
-    montoAutorizado: parseFloat(fd.get('montoAutorizado')) || 0,
+    montoAutorizado: montoAut,
     montoDerogado:   parseFloat(fd.get('montoDerogado'))   || 0,
     chequeFecha:     fd.get('chequeFecha') || '',
     chequeCantidad:  parseFloat(fd.get('chequeCantidad'))  || 0,
     chequeFolio:     fd.get('chequeFolio').trim(),
   };
-  saveDB();
+  try {
+    const res = await apiFetch(`/api/beneficiarios/${id}`, {
+      method: 'PUT', body: JSON.stringify(b)
+    });
+    if (!res) return;
+    if (!res.ok) {
+      const err = await res.json();
+      showToast(err.error || 'Error al guardar.', false); return;
+    }
+    const actualizado = await res.json();
+    db.beneficiarios[idx] = actualizado;
 
-  // Notify if money was returned to bolsa
-  const montoAut = db.beneficiarios[idx].montoAutorizado;
-  if (estatusAnterior === 'Activo' && estatusNuevo !== 'Activo' && montoAut > 0) {
-    showToast(`Estatus cambiado a "${estatusNuevo}". ${fmt(montoAut)} regresaron a la bolsa.`);
-  } else if (estatusAnterior !== 'Activo' && estatusNuevo === 'Activo' && montoAut > 0) {
-    showToast(`Beneficiario reactivado. ${fmt(montoAut)} asignados desde la bolsa.`);
-  } else {
-    showToast(`"${nombreB}" actualizado correctamente.`);
+    if (estatusAnterior === 'Activo' && estatusNuevo !== 'Activo' && montoAut > 0) {
+      showToast(`Estatus cambiado a "${estatusNuevo}". ${fmt(montoAut)} regresaron a la bolsa.`);
+    } else if (estatusAnterior !== 'Activo' && estatusNuevo === 'Activo' && montoAut > 0) {
+      showToast(`Beneficiario reactivado. ${fmt(montoAut)} asignados desde la bolsa.`);
+    } else {
+      showToast(`"${nombreB}" actualizado correctamente.`);
+    }
+    closeEditPanel();
+  } catch {
+    showToast('Error de conexión con el servidor.', false);
   }
-
-  closeEditPanel();
 }
 
-function handleConfigSave(e) {
+async function handleConfigSave(e) {
   e.preventDefault();
-  const fd = new FormData(e.target);
-  cfg.bolsaGlobal = parseFloat(fd.get('bolsaGlobal')) || 0;
-  cfg.periodo     = fd.get('periodo').trim();
-  saveCfg();
-  showToast('Configuración guardada correctamente.');
+  const fd  = new FormData(e.target);
+  const rol = currentUser?.rol;
+
+  // Construye el body según lo que el rol puede modificar
+  const body = {};
+  if (rol === 'financiero' || rol === 'admin') {
+    body.bolsaGlobal = parseFloat(fd.get('bolsaGlobal')) || 0;
+  }
+  if (rol === 'operativo' || rol === 'admin') {
+    body.periodo = (fd.get('periodo') || '').trim();
+  }
+
+  try {
+    const res = await apiFetch('/api/config', { method: 'PUT', body: JSON.stringify(body) });
+    if (!res) return;
+    if (!res.ok) { showToast('Error al guardar configuración.', false); return; }
+    if (body.bolsaGlobal !== undefined) cfg.bolsaGlobal = body.bolsaGlobal;
+    if (body.periodo     !== undefined) cfg.periodo     = body.periodo;
+    showToast('Configuración guardada correctamente.');
+  } catch {
+    showToast('Error de conexión con el servidor.', false);
+  }
 }
 
-function handlePasswordChange(e) {
+async function handlePasswordChange(e) {
   e.preventDefault();
-  const fd     = new FormData(e.target);
-  const creds  = loadCreds();
-  const actual = fd.get('passActual');
-  if (actual !== creds.password) {
-    showToast('La contraseña actual es incorrecta.', false);
-    return;
-  }
+  const fd      = new FormData(e.target);
   const nueva   = fd.get('passNueva').trim();
   const confirm = fd.get('passConfirm').trim();
   if (nueva.length < 6) {
-    showToast('La nueva contraseña debe tener al menos 6 caracteres.', false);
-    return;
+    showToast('La nueva contraseña debe tener al menos 6 caracteres.', false); return;
   }
   if (nueva !== confirm) {
-    showToast('Las contraseñas no coinciden.', false);
-    return;
+    showToast('Las contraseñas no coinciden.', false); return;
   }
-  creds.password = nueva;
-  saveCreds(creds);
-  e.target.reset();
-  showToast('Contraseña actualizada correctamente.');
+  try {
+    const res = await apiFetch('/api/auth/password', {
+      method: 'PUT',
+      body: JSON.stringify({ passActual: fd.get('passActual'), passNueva: nueva })
+    });
+    if (!res) return;
+    if (!res.ok) {
+      const err = await res.json();
+      showToast(err.error || 'Error al cambiar contraseña.', false); return;
+    }
+    e.target.reset();
+    showToast('Contraseña actualizada correctamente.');
+  } catch {
+    showToast('Error de conexión con el servidor.', false);
+  }
 }
 
 function exportCSV() {
@@ -1125,6 +1135,26 @@ function exportCSV() {
 /* ============================================================
    INIT
    ============================================================ */
+async function initApp() {
+  const token = getToken();
+  if (token) {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      currentUser = { usuario: payload.usuario, rol: payload.rol };
+    } catch { logout(); return; }
+  }
+
+  // Aplica clases de rol al body para control de visibilidad por CSS
+  document.body.classList.remove('rol-admin', 'rol-financiero', 'rol-operativo');
+  document.body.classList.add(`rol-${currentUser?.rol || 'operativo'}`);
+
+  const ok = await loadData();
+  if (!ok) return;
+
+  showApp();
+  navigate('inicio');
+}
+
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', e => { e.preventDefault(); navigate(el.dataset.page); });
 });
@@ -1132,8 +1162,7 @@ document.getElementById('form-login').addEventListener('submit', handleLogin);
 document.getElementById('btn-logout').addEventListener('click', logout);
 
 if (isLoggedIn()) {
-  showApp();
-  navigate('inicio');
+  initApp();
 } else {
   showLoginScreen();
 }
