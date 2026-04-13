@@ -23,6 +23,8 @@ const TIPOS_BAJA  = ['Voluntaria', 'Tácita'];
 const STATUS_LIST = ['Activo', 'Baja', 'Suspendido'];
 const DB_KEY      = 'becas_db';
 const CFG_KEY     = 'becas_cfg';
+const CREDS_KEY   = 'becas_creds';
+const AUTH_KEY    = 'becas_auth';
 const DB_VERSION  = 3; // bump to reset old localStorage
 
 /* ============================================================
@@ -46,6 +48,51 @@ function loadCfg() {
 function saveCfg() { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
 
 function defaultCfg() { return { bolsaGlobal: 1150000, periodo: 'Agosto - Diciembre 2025' }; }
+
+function loadCreds() {
+  try { const r = localStorage.getItem(CREDS_KEY); return r ? JSON.parse(r) : defaultCreds(); }
+  catch { return defaultCreds(); }
+}
+function saveCreds(c) { localStorage.setItem(CREDS_KEY, JSON.stringify(c)); }
+function defaultCreds() { return { usuario: 'admin', password: 'becas2025' }; }
+
+/* Auth */
+function isLoggedIn() { return sessionStorage.getItem(AUTH_KEY) === '1'; }
+
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = '';
+  document.getElementById('app-layout').style.display = 'none';
+  document.getElementById('login-error').style.display = 'none';
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+  setTimeout(() => document.getElementById('login-user').focus(), 60);
+}
+
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app-layout').style.display = '';
+}
+
+function handleLogin(e) {
+  e.preventDefault();
+  const creds = loadCreds();
+  const user  = document.getElementById('login-user').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  if (user === creds.usuario && pass === creds.password) {
+    sessionStorage.setItem(AUTH_KEY, '1');
+    showApp();
+    navigate('inicio');
+  } else {
+    document.getElementById('login-error').style.display = '';
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login-pass').focus();
+  }
+}
+
+function logout() {
+  sessionStorage.removeItem(AUTH_KEY);
+  showLoginScreen();
+}
 
 function defaultDB() {
   return {
@@ -202,6 +249,7 @@ const afterRender = {
   },
   config() {
     document.getElementById('form-config').addEventListener('submit', handleConfigSave);
+    document.getElementById('form-password').addEventListener('submit', handlePasswordChange);
   }
 };
 
@@ -895,6 +943,38 @@ function pageConfig() {
         </button>
       </div>
     </form>
+
+    <form id="form-password" autocomplete="off" style="display:flex;flex-direction:column;gap:16px">
+      <div class="config-card">
+        <div class="config-card-header">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <div>
+            <h3 class="config-card-title">Cambiar Contraseña</h3>
+            <p class="config-card-sub">Actualiza las credenciales de acceso al sistema</p>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;max-width:400px">
+          <div class="form-group">
+            <label>Contraseña actual</label>
+            <input type="password" name="passActual" required placeholder="••••••••"/>
+          </div>
+          <div class="form-group">
+            <label>Nueva contraseña <span class="field-hint">(mín. 6 caracteres)</span></label>
+            <input type="password" name="passNueva" required minlength="6" placeholder="••••••••"/>
+          </div>
+          <div class="form-group">
+            <label>Confirmar nueva contraseña</label>
+            <input type="password" name="passConfirm" required placeholder="••••••••"/>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end">
+        <button type="submit" class="btn-primary btn-lg">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Actualizar Contraseña
+        </button>
+      </div>
+    </form>
   </div>`;
 }
 
@@ -983,6 +1063,31 @@ function handleConfigSave(e) {
   showToast('Configuración guardada correctamente.');
 }
 
+function handlePasswordChange(e) {
+  e.preventDefault();
+  const fd     = new FormData(e.target);
+  const creds  = loadCreds();
+  const actual = fd.get('passActual');
+  if (actual !== creds.password) {
+    showToast('La contraseña actual es incorrecta.', false);
+    return;
+  }
+  const nueva   = fd.get('passNueva').trim();
+  const confirm = fd.get('passConfirm').trim();
+  if (nueva.length < 6) {
+    showToast('La nueva contraseña debe tener al menos 6 caracteres.', false);
+    return;
+  }
+  if (nueva !== confirm) {
+    showToast('Las contraseñas no coinciden.', false);
+    return;
+  }
+  creds.password = nueva;
+  saveCreds(creds);
+  e.target.reset();
+  showToast('Contraseña actualizada correctamente.');
+}
+
 function exportCSV() {
   const list = reporteFilter === 'Todos'
     ? db.beneficiarios
@@ -1023,5 +1128,12 @@ function exportCSV() {
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', e => { e.preventDefault(); navigate(el.dataset.page); });
 });
+document.getElementById('form-login').addEventListener('submit', handleLogin);
+document.getElementById('btn-logout').addEventListener('click', logout);
 
-navigate('inicio');
+if (isLoggedIn()) {
+  showApp();
+  navigate('inicio');
+} else {
+  showLoginScreen();
+}

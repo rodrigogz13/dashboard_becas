@@ -10,7 +10,47 @@
   <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
-<div class="app-layout">
+
+<!-- ===== LOGIN SCREEN ===== -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="brand-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+          <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+        </svg>
+      </div>
+      <div>
+        <p class="login-brand-title">Sistema de Gestión</p>
+        <p class="login-brand-sub">de Becas</p>
+      </div>
+    </div>
+    <h2 class="login-title">Iniciar sesión</h2>
+    <p class="login-subtitle">Ingresa tus credenciales para continuar</p>
+    <form id="form-login" autocomplete="off">
+      <div class="form-group">
+        <label for="login-user">Usuario</label>
+        <input type="text" id="login-user" name="usuario" required autocomplete="username" placeholder="admin"/>
+      </div>
+      <div class="form-group">
+        <label for="login-pass">Contraseña</label>
+        <input type="password" id="login-pass" name="password" required autocomplete="current-password" placeholder="••••••••"/>
+      </div>
+      <div id="login-error" class="login-error" style="display:none">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Usuario o contraseña incorrectos.
+      </div>
+      <button type="submit" class="btn-primary btn-lg login-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        Ingresar
+      </button>
+    </form>
+    <p class="login-hint">Acceso restringido &mdash; Solo personal autorizado</p>
+  </div>
+</div>
+
+<div id="app-layout" class="app-layout" style="display:none">
 
   <!-- ===== SIDEBAR ===== -->
   <aside class="sidebar">
@@ -77,7 +117,13 @@
       </a>
     </nav>
 
-    <div class="sidebar-footer">Panel Principal v1.0</div>
+    <div class="sidebar-footer">
+      <span>Panel Principal v1.0</span>
+      <button class="btn-logout" id="btn-logout" title="Cerrar sesión">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Salir
+      </button>
+    </div>
   </aside>
 
   <!-- ===== MAIN CONTENT ===== -->
