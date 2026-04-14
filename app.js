@@ -27,7 +27,18 @@ const AUTH_KEY = 'becas_token';
    API HELPER
    ============================================================ */
 function getToken() { return sessionStorage.getItem(AUTH_KEY); }
-function isLoggedIn() { return !!getToken(); }
+function isLoggedIn() {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    if (payload.exp && Date.now() / 1000 > payload.exp) {
+      sessionStorage.removeItem(AUTH_KEY);
+      return false;
+    }
+    return true;
+  } catch { return false; }
+}
 
 async function apiFetch(url, options = {}) {
   const token = getToken();
@@ -161,6 +172,18 @@ function calcStats() {
     .reduce((s, b) => s + (b.montoAutorizado || 0), 0);
   const disponible = (cfg.bolsaGlobal || 0) - totalAsig;
   return { total, activos, bajas, totalAsig, disponible };
+}
+
+/* ============================================================
+   VALIDACIONES
+   ============================================================ */
+const CURP_REGEX = /^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d$/;
+
+function validarCURP(curp) {
+  return CURP_REGEX.test(curp.toUpperCase());
+}
+function validarTel(tel) {
+  return tel === '' || /^\d{10}$/.test(tel);
 }
 
 function showToast(msg, ok = true) {
@@ -403,47 +426,49 @@ function pageRegistrar() {
           </div>
         </div>
 
-        <!-- Montos -->
-        <div class="form-row-2">
-          <div class="form-group">
-            <label>Monto Autorizado <span class="field-hint">(fijo)</span></label>
-            <div class="input-prefix-wrap">
-              <span class="input-prefix">$</span>
-              <input type="number" name="montoAutorizado" placeholder="0.00"
-                min="0" step="0.01" class="has-prefix"/>
+        <!-- Montos — solo visible para admin y financiero -->
+        <div class="can-financial">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>Monto Autorizado <span class="field-hint">(fijo)</span></label>
+              <div class="input-prefix-wrap">
+                <span class="input-prefix">$</span>
+                <input type="number" name="montoAutorizado" placeholder="0.00"
+                  min="0" step="0.01" class="has-prefix"/>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Monto Derogado <span class="field-hint">(actualizable)</span></label>
+              <div class="input-prefix-wrap">
+                <span class="input-prefix">$</span>
+                <input type="number" name="montoDerogado" placeholder="0.00"
+                  min="0" step="0.01" class="has-prefix"/>
+              </div>
             </div>
           </div>
-          <div class="form-group">
-            <label>Monto Derogado <span class="field-hint">(actualizable)</span></label>
-            <div class="input-prefix-wrap">
-              <span class="input-prefix">$</span>
-              <input type="number" name="montoDerogado" placeholder="0.00"
-                min="0" step="0.01" class="has-prefix"/>
-            </div>
-          </div>
-        </div>
 
-        <!-- Cheque -->
-        <div class="form-section-label">
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-          Cheque
-        </div>
-        <div class="form-row-3">
-          <div class="form-group">
-            <label>Fecha</label>
-            <input type="date" name="chequeFecha"/>
+          <!-- Cheque -->
+          <div class="form-section-label">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            Cheque
           </div>
-          <div class="form-group">
-            <label>Cantidad</label>
-            <div class="input-prefix-wrap">
-              <span class="input-prefix">$</span>
-              <input type="number" name="chequeCantidad" placeholder="0.00"
-                min="0" step="0.01" class="has-prefix"/>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Fecha</label>
+              <input type="date" name="chequeFecha"/>
             </div>
-          </div>
-          <div class="form-group">
-            <label>Folio del Cheque</label>
-            <input type="text" name="chequeFolio" placeholder="CHQ-0001"/>
+            <div class="form-group">
+              <label>Cantidad</label>
+              <div class="input-prefix-wrap">
+                <span class="input-prefix">$</span>
+                <input type="number" name="chequeCantidad" placeholder="0.00"
+                  min="0" step="0.01" class="has-prefix"/>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Folio del Cheque</label>
+              <input type="text" name="chequeFolio" placeholder="CHQ-0001"/>
+            </div>
           </div>
         </div>
 
@@ -957,6 +982,21 @@ async function handleRegistrar(e) {
   const folio = fd.get('folio').trim();
   if (!folio) { showToast('Selecciona un Tipo de beca para generar el folio.', false); return; }
 
+  const curp = fd.get('curp').trim().toUpperCase();
+  if (!validarCURP(curp)) {
+    showToast('CURP inválida. Debe tener 18 caracteres con el formato correcto.', false); return;
+  }
+  if (db.beneficiarios.some(b => b.curp === curp)) {
+    showToast('Esta CURP ya está registrada en el sistema.', false); return;
+  }
+
+  const telAlumno = fd.get('telAlumno').trim();
+  const telFam1   = fd.get('telFam1').trim();
+  const telFam2   = fd.get('telFam2').trim();
+  if (!validarTel(telAlumno)) { showToast('Teléfono del alumno inválido. Debe tener 10 dígitos.', false); return; }
+  if (!validarTel(telFam1))   { showToast('Teléfono Familiar 1 inválido. Debe tener 10 dígitos.', false); return; }
+  if (!validarTel(telFam2))   { showToast('Teléfono Familiar 2 inválido. Debe tener 10 dígitos.', false); return; }
+
   const estatus = fd.get('estatus');
   const b = {
     folio,
@@ -998,27 +1038,54 @@ async function handleEditSave(e, id) {
   const idx = db.beneficiarios.findIndex(x => x.id === id);
   if (idx === -1) return;
 
+  const rol             = currentUser?.rol;
   const estatusAnterior = db.beneficiarios[idx].estatus;
   const estatusNuevo    = fd.get('estatus');
-  const nombreB         = fd.get('nombre').trim();
+  const nombreB         = fd.get('nombre')?.trim() || db.beneficiarios[idx].nombre;
   const montoAut        = parseFloat(fd.get('montoAutorizado')) || 0;
 
-  const b = {
-    nombre:          nombreB,
-    curp:            fd.get('curp').trim().toUpperCase(),
-    correo:          fd.get('correo').trim(),
-    telAlumno:       fd.get('telAlumno').trim(),
-    telFam1:         fd.get('telFam1').trim(),
-    telFam2:         fd.get('telFam2').trim(),
-    tipo:            fd.get('tipo'),
-    estatus:         estatusNuevo,
-    tipoBaja:        estatusNuevo === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
-    montoAutorizado: montoAut,
-    montoDerogado:   parseFloat(fd.get('montoDerogado'))   || 0,
-    chequeFecha:     fd.get('chequeFecha') || '',
-    chequeCantidad:  parseFloat(fd.get('chequeCantidad'))  || 0,
-    chequeFolio:     fd.get('chequeFolio').trim(),
-  };
+  // Valida campos si el rol puede editarlos
+  if (rol === 'admin' || rol === 'operativo') {
+    const curp = fd.get('curp').trim().toUpperCase();
+    if (!validarCURP(curp)) {
+      showToast('CURP inválida. Debe tener 18 caracteres con el formato correcto.', false); return;
+    }
+    const dupCURP = db.beneficiarios.find(x => x.curp === curp && x.id !== id);
+    if (dupCURP) { showToast('Esta CURP ya pertenece a otro beneficiario.', false); return; }
+    const telAlumno = fd.get('telAlumno').trim();
+    const telFam1   = fd.get('telFam1').trim();
+    const telFam2   = fd.get('telFam2').trim();
+    if (!validarTel(telAlumno)) { showToast('Teléfono del alumno inválido. Debe tener 10 dígitos.', false); return; }
+    if (!validarTel(telFam1))   { showToast('Teléfono Familiar 1 inválido. Debe tener 10 dígitos.', false); return; }
+    if (!validarTel(telFam2))   { showToast('Teléfono Familiar 2 inválido. Debe tener 10 dígitos.', false); return; }
+  }
+
+  // Construye el body según lo que el rol puede modificar
+  let b = {};
+  if (rol === 'admin' || rol === 'operativo') {
+    b = {
+      ...b,
+      nombre:   nombreB,
+      curp:     fd.get('curp').trim().toUpperCase(),
+      correo:   fd.get('correo').trim(),
+      telAlumno: fd.get('telAlumno').trim(),
+      telFam1:  fd.get('telFam1').trim(),
+      telFam2:  fd.get('telFam2').trim(),
+      tipo:     fd.get('tipo'),
+      estatus:  estatusNuevo,
+      tipoBaja: estatusNuevo === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
+    };
+  }
+  if (rol === 'admin' || rol === 'financiero') {
+    b = {
+      ...b,
+      montoAutorizado: montoAut,
+      montoDerogado:   parseFloat(fd.get('montoDerogado'))  || 0,
+      chequeFecha:     fd.get('chequeFecha') || '',
+      chequeCantidad:  parseFloat(fd.get('chequeCantidad')) || 0,
+      chequeFolio:     fd.get('chequeFolio').trim(),
+    };
+  }
   try {
     const res = await apiFetch(`/api/beneficiarios/${id}`, {
       method: 'PUT', body: JSON.stringify(b)
@@ -1073,8 +1140,12 @@ async function handleConfigSave(e) {
 async function handlePasswordChange(e) {
   e.preventDefault();
   const fd      = new FormData(e.target);
+  const actual  = fd.get('passActual');
   const nueva   = fd.get('passNueva').trim();
   const confirm = fd.get('passConfirm').trim();
+  if (!actual) {
+    showToast('Ingresa tu contraseña actual.', false); return;
+  }
   if (nueva.length < 6) {
     showToast('La nueva contraseña debe tener al menos 6 caracteres.', false); return;
   }
