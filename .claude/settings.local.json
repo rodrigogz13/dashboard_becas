@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); console.log\\('HOST:', process.env.DB_HOST, 'PORT:', process.env.DB_PORT, 'USER:', process.env.DB_USER, 'DB:', process.env.DB_NAME\\);\")",
+      "Bash(node -e ':*)"
+    ]
+  }
+}

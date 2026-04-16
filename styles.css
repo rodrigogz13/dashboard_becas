@@ -385,3 +385,39 @@ body.rol-operativo  .cfg-presupuesto { display: none !important; } /* operativo 
 /* admin-only: reservado para uso futuro */
 body.rol-financiero .admin-only { display: none !important; }
 body.rol-operativo  .admin-only { display: none !important; }
+
+/* ============================================================
+   CHEQUES
+   ============================================================ */
+.cheques-list {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 8px; min-height: 28px;
+}
+.cheque-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 10px; background: var(--gray-50);
+  border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
+}
+.cheque-info { display: flex; gap: 12px; align-items: center; flex: 1; flex-wrap: wrap; }
+.cheque-fecha { color: var(--gray-500); font-size: 12px; white-space: nowrap; }
+.cheque-folio { font-family: monospace; font-size: 12px; color: var(--gray-600); }
+.cheque-cantidad { font-weight: 600; color: var(--gray-800); margin-left: auto; white-space: nowrap; }
+.empty-cheques { color: var(--gray-400); font-size: 12px; text-align: center; padding: 10px 0; }
+.add-cheque-row { margin-top: 6px; }
+.btn-sm { padding: 5px 11px !important; font-size: 12px !important; }
+.add-cheque-form {
+  margin-top: 10px; padding: 12px;
+  background: var(--gray-50); border: 1px dashed var(--gray-300);
+  border-radius: var(--radius-sm);
+}
+.add-cheque-btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.monto-derogado-display {
+  padding: 8px 12px; background: var(--gray-100);
+  border: 1px solid var(--gray-200); border-radius: var(--radius-sm);
+  font-weight: 600; color: var(--emerald-700); font-size: 14px;
+}
+.btn-danger-sm { color: var(--red-500) !important; }
+.btn-danger-sm:hover { background: var(--red-100) !important; }
+
+/* Sección de cheques visible para todos los roles (lectura), botones de acción solo a financiero/admin */
+.can-financial-view { display: block; }

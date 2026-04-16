@@ -161,16 +161,26 @@ function nextFolioByTipo(tipo) {
   return `${pre}${String(max + 1).padStart(4, '0')}`;
 }
 
-/* calcStats — only ACTIVO beneficiaries count toward assigned money.
-   Baja/Suspendido return their amount to the bolsa automatically. */
+/* calcStats
+   - Activos:           reservan su montoAutorizado completo.
+   - Baja/Suspendido:   el montoDerogado (ya pagado) NO regresa;
+                        solo regresa la parte no pagada. */
 function calcStats() {
-  const total     = db.beneficiarios.length;
-  const activos   = db.beneficiarios.filter(b => b.estatus === 'Activo').length;
-  const bajas     = db.beneficiarios.filter(b => b.estatus === 'Baja').length;
+  const total   = db.beneficiarios.length;
+  const activos = db.beneficiarios.filter(b => b.estatus === 'Activo').length;
+  const bajas   = db.beneficiarios.filter(b => b.estatus === 'Baja').length;
+
+  // Dinero comprometido por beneficiarios activos
   const totalAsig = db.beneficiarios
     .filter(b => b.estatus === 'Activo')
     .reduce((s, b) => s + (b.montoAutorizado || 0), 0);
-  const disponible = (cfg.bolsaGlobal || 0) - totalAsig;
+
+  // Dinero ya pagado a beneficiarios en baja/suspendido (no recuperable)
+  const totalDerogadoBajas = db.beneficiarios
+    .filter(b => b.estatus !== 'Activo')
+    .reduce((s, b) => s + (b.montoDerogado || 0), 0);
+
+  const disponible = (cfg.bolsaGlobal || 0) - totalAsig - totalDerogadoBajas;
   return { total, activos, bajas, totalAsig, disponible };
 }
 
@@ -447,29 +457,7 @@ function pageRegistrar() {
             </div>
           </div>
 
-          <!-- Cheque -->
-          <div class="form-section-label">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-            Cheque
-          </div>
-          <div class="form-row-3">
-            <div class="form-group">
-              <label>Fecha</label>
-              <input type="date" name="chequeFecha"/>
-            </div>
-            <div class="form-group">
-              <label>Cantidad</label>
-              <div class="input-prefix-wrap">
-                <span class="input-prefix">$</span>
-                <input type="number" name="chequeCantidad" placeholder="0.00"
-                  min="0" step="0.01" class="has-prefix"/>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Folio del Cheque</label>
-              <input type="text" name="chequeFolio" placeholder="CHQ-0001"/>
-            </div>
-          </div>
+          <!-- Los cheques se agregan después del registro desde Buscar / Editar -->
         </div>
 
         <div class="form-actions">
@@ -560,10 +548,101 @@ function updateBuscarTable() {
   if (count) count.textContent = `${list.length} resultado(s)`;
 }
 
-function openEditPanel(id) {
+function renderChequesList(cheques, beneficiarioId) {
+  if (!cheques.length) {
+    return '<p class="empty-cheques">Sin cheques registrados.</p>';
+  }
+  return cheques.map(c => `
+    <div class="cheque-item">
+      <div class="cheque-info">
+        <span class="cheque-fecha">${esc(c.fecha) || 'Sin fecha'}</span>
+        <span class="cheque-folio">${esc(c.folio) || '—'}</span>
+        <span class="cheque-cantidad">${fmt(c.cantidad)}</span>
+      </div>
+    </div>`).join('');
+}
+
+function toggleAddChequeForm(beneficiarioId) {
+  const form = document.getElementById(`add-cheque-form-${beneficiarioId}`);
+  if (form) form.style.display = form.style.display === 'none' ? '' : 'none';
+}
+
+async function addCheque(beneficiarioId) {
+  const fecha    = document.getElementById(`nc-fecha-${beneficiarioId}`).value;
+  const cantidad = parseFloat(document.getElementById(`nc-cantidad-${beneficiarioId}`).value) || 0;
+  const folio    = document.getElementById(`nc-folio-${beneficiarioId}`).value.trim();
+
+  if (!cantidad) { showToast('Ingresa la cantidad del cheque.', false); return; }
+
+  const b = db.beneficiarios.find(x => x.id === beneficiarioId);
+  if (b) {
+    const nuevoTotal = (b.montoDerogado || 0) + cantidad;
+    if (nuevoTotal > b.montoAutorizado) {
+      const disponible = b.montoAutorizado - (b.montoDerogado || 0);
+      showToast(`Excede el monto autorizado. Disponible para cheques: ${fmt(disponible)}.`, false);
+      return;
+    }
+  }
+
+  const res = await apiFetch(`/api/beneficiarios/${beneficiarioId}/cheques`, {
+    method: 'POST', body: JSON.stringify({ fecha, cantidad, folio })
+  });
+  if (!res || !res.ok) { showToast('Error al agregar cheque.', false); return; }
+  const data = await res.json();
+
+  const idx = db.beneficiarios.findIndex(x => x.id === beneficiarioId);
+  if (idx !== -1) db.beneficiarios[idx].montoDerogado = data.montoDerogado;
+
+  const chRes = await apiFetch(`/api/beneficiarios/${beneficiarioId}/cheques`);
+  const cheques = chRes && chRes.ok ? await chRes.json() : [];
+
+  const listEl = document.getElementById(`cheques-list-${beneficiarioId}`);
+  if (listEl) listEl.innerHTML = renderChequesList(cheques, beneficiarioId);
+
+  const montoEl = document.getElementById(`monto-derogado-val-${beneficiarioId}`);
+  if (montoEl) montoEl.textContent = fmt(data.montoDerogado);
+
+  document.getElementById(`nc-fecha-${beneficiarioId}`).value = '';
+  document.getElementById(`nc-cantidad-${beneficiarioId}`).value = '';
+  document.getElementById(`nc-folio-${beneficiarioId}`).value = '';
+  toggleAddChequeForm(beneficiarioId);
+  showToast('Cheque agregado correctamente.');
+}
+
+async function deleteCheque(chequeId, beneficiarioId) {
+  if (!confirm('¿Eliminar este cheque?')) return;
+
+  const res = await apiFetch(`/api/cheques/${chequeId}`, { method: 'DELETE' });
+  if (!res || !res.ok) { showToast('Error al eliminar cheque.', false); return; }
+  const data = await res.json();
+
+  const idx = db.beneficiarios.findIndex(x => x.id === beneficiarioId);
+  if (idx !== -1) db.beneficiarios[idx].montoDerogado = data.montoDerogado;
+
+  const chRes = await apiFetch(`/api/beneficiarios/${beneficiarioId}/cheques`);
+  const cheques = chRes && chRes.ok ? await chRes.json() : [];
+
+  const listEl = document.getElementById(`cheques-list-${beneficiarioId}`);
+  if (listEl) listEl.innerHTML = renderChequesList(cheques, beneficiarioId);
+
+  const montoEl = document.getElementById(`monto-derogado-val-${beneficiarioId}`);
+  if (montoEl) montoEl.textContent = fmt(data.montoDerogado);
+
+  showToast('Cheque eliminado.');
+}
+
+async function openEditPanel(id) {
   buscarEditId = id;
   const b = db.beneficiarios.find(x => x.id === id);
   if (!b) return;
+
+  // Muestra estado de carga mientras se obtienen los cheques
+  document.getElementById('buscar-panel').innerHTML =
+    '<div style="padding:28px;color:#94a3b8;text-align:center">Cargando…</div>';
+  updateBuscarTable();
+
+  const chRes = await apiFetch(`/api/beneficiarios/${id}/cheques`);
+  const cheques = (chRes && chRes.ok) ? await chRes.json() : [];
 
   document.getElementById('buscar-panel').innerHTML = `
   <div class="edit-panel-inner">
@@ -638,30 +717,50 @@ function openEditPanel(id) {
           </div>
         </div>
         <div class="form-group">
-          <label>Monto Derogado <span class="field-hint">(actualizable)</span></label>
-          <div class="input-prefix-wrap">
-            <span class="input-prefix">$</span>
-            <input type="number" name="montoDerogado" value="${b.montoDerogado}"
-              min="0" step="0.01" class="has-prefix"/>
+          <label>Monto Derogado <span class="field-hint">(total pagado)</span></label>
+          <div class="monto-derogado-display" id="monto-derogado-val-${id}">
+            ${fmt(b.montoDerogado)}
           </div>
         </div>
+      </div>
 
-        <p class="edit-section-label">Cheque</p>
-        <div class="form-group">
-          <label>Fecha</label>
-          <input type="date" name="chequeFecha" value="${esc(b.chequeFecha)}"/>
+      <div class="can-financial-view">
+        <p class="edit-section-label">Cheques Emitidos</p>
+        <div id="cheques-list-${id}" class="cheques-list">
+          ${renderChequesList(cheques, id)}
         </div>
-        <div class="form-group">
-          <label>Cantidad</label>
-          <div class="input-prefix-wrap">
-            <span class="input-prefix">$</span>
-            <input type="number" name="chequeCantidad" value="${b.chequeCantidad || ''}"
-              min="0" step="0.01" class="has-prefix" placeholder="0.00"/>
+        <div class="add-cheque-row can-financial">
+          <button type="button" class="btn-secondary btn-sm"
+            onclick="toggleAddChequeForm(${id})">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Agregar Cheque
+          </button>
+        </div>
+        <div id="add-cheque-form-${id}" class="add-cheque-form" style="display:none">
+          <div class="form-row-2">
+            <div class="form-group">
+              <label>Fecha</label>
+              <input type="date" id="nc-fecha-${id}"/>
+            </div>
+            <div class="form-group">
+              <label>Cantidad</label>
+              <div class="input-prefix-wrap">
+                <span class="input-prefix">$</span>
+                <input type="number" id="nc-cantidad-${id}" min="0" step="0.01"
+                  class="has-prefix" placeholder="0.00"/>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="form-group">
-          <label>Folio del Cheque</label>
-          <input type="text" name="chequeFolio" value="${esc(b.chequeFolio)}" placeholder="CHQ-0001"/>
+          <div class="form-group">
+            <label>Folio del Cheque</label>
+            <input type="text" id="nc-folio-${id}" placeholder="CHQ-0001"/>
+          </div>
+          <div class="add-cheque-btn-row">
+            <button type="button" class="btn-primary btn-sm"
+              onclick="addCheque(${id})">Guardar Cheque</button>
+            <button type="button" class="btn-secondary btn-sm"
+              onclick="toggleAddChequeForm(${id})">Cancelar</button>
+          </div>
         </div>
       </div>
 
@@ -1010,10 +1109,6 @@ async function handleRegistrar(e) {
     estatus,
     tipoBaja:        estatus === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
     montoAutorizado: parseFloat(fd.get('montoAutorizado')) || 0,
-    montoDerogado:   parseFloat(fd.get('montoDerogado'))   || 0,
-    chequeFecha:     fd.get('chequeFecha') || '',
-    chequeCantidad:  parseFloat(fd.get('chequeCantidad'))  || 0,
-    chequeFolio:     fd.get('chequeFolio').trim(),
   };
   try {
     const res = await apiFetch('/api/beneficiarios', {
@@ -1065,25 +1160,22 @@ async function handleEditSave(e, id) {
   if (rol === 'admin' || rol === 'operativo') {
     b = {
       ...b,
-      nombre:   nombreB,
-      curp:     fd.get('curp').trim().toUpperCase(),
-      correo:   fd.get('correo').trim(),
+      nombre:    nombreB,
+      curp:      fd.get('curp').trim().toUpperCase(),
+      correo:    fd.get('correo').trim(),
       telAlumno: fd.get('telAlumno').trim(),
-      telFam1:  fd.get('telFam1').trim(),
-      telFam2:  fd.get('telFam2').trim(),
-      tipo:     fd.get('tipo'),
-      estatus:  estatusNuevo,
-      tipoBaja: estatusNuevo === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
+      telFam1:   fd.get('telFam1').trim(),
+      telFam2:   fd.get('telFam2').trim(),
+      tipo:      fd.get('tipo'),
+      estatus:   estatusNuevo,
+      tipoBaja:  estatusNuevo === 'Baja' ? (fd.get('tipoBaja') || 'Voluntaria') : '',
     };
   }
   if (rol === 'admin' || rol === 'financiero') {
     b = {
       ...b,
       montoAutorizado: montoAut,
-      montoDerogado:   parseFloat(fd.get('montoDerogado'))  || 0,
-      chequeFecha:     fd.get('chequeFecha') || '',
-      chequeCantidad:  parseFloat(fd.get('chequeCantidad')) || 0,
-      chequeFolio:     fd.get('chequeFolio').trim(),
+      // montoDerogado se calcula automáticamente de la tabla cheques
     };
   }
   try {
@@ -1098,14 +1190,25 @@ async function handleEditSave(e, id) {
     const actualizado = await res.json();
     db.beneficiarios[idx] = actualizado;
 
-    if (estatusAnterior === 'Activo' && estatusNuevo !== 'Activo' && montoAut > 0) {
-      showToast(`Estatus cambiado a "${estatusNuevo}". ${fmt(montoAut)} regresaron a la bolsa.`);
-    } else if (estatusAnterior !== 'Activo' && estatusNuevo === 'Activo' && montoAut > 0) {
-      showToast(`Beneficiario reactivado. ${fmt(montoAut)} asignados desde la bolsa.`);
+    // Compara el estatus realmente guardado (no el del formulario)
+    const estatusGuardado = actualizado.estatus;
+    const montoGuardado   = actualizado.montoAutorizado;
+
+    if (estatusAnterior === 'Activo' && estatusGuardado !== 'Activo') {
+      const derogado  = actualizado.montoDerogado || 0;
+      const regresado = montoGuardado - derogado;
+      const msgBaja   = regresado > 0
+        ? ` ${fmt(regresado)} regresaron a la bolsa (${fmt(derogado)} ya pagados no regresan).`
+        : derogado > 0 ? ` El monto autorizado fue completamente pagado, no regresa dinero.` : '';
+      showToast(`Estatus cambiado a "${estatusGuardado}".${msgBaja}`);
+      navigate('inicio');
+    } else if (estatusAnterior !== 'Activo' && estatusGuardado === 'Activo') {
+      showToast(`Beneficiario reactivado.${montoGuardado > 0 ? ' ' + fmt(montoGuardado) + ' asignados desde la bolsa.' : ''}`);
+      navigate('inicio');
     } else {
       showToast(`"${nombreB}" actualizado correctamente.`);
+      closeEditPanel();
     }
-    closeEditPanel();
   } catch {
     showToast('Error de conexión con el servidor.', false);
   }
@@ -1178,16 +1281,14 @@ function exportCSV() {
     'Folio','Nombre','CURP','Correo',
     'Tel. Alumno','Tel. Familiar 1','Tel. Familiar 2',
     'Tipo de Beca','Código','Estatus','Tipo de Baja',
-    'Monto Autorizado','Monto Derogado',
-    'Cheque Fecha','Cheque Cantidad','Cheque Folio'
+    'Monto Autorizado','Monto Derogado (Total Pagado)'
   ];
   const rows = list.map(b => [
     b.folio, b.nombre, b.curp, b.correo,
     b.telAlumno, b.telFam1, b.telFam2,
     b.tipo, TYPE_CODES[b.tipo] || '',
     b.estatus, b.tipoBaja || '',
-    b.montoAutorizado, b.montoDerogado || 0,
-    b.chequeFecha || '', b.chequeCantidad || 0, b.chequeFolio || ''
+    b.montoAutorizado, b.montoDerogado || 0
   ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
 
   const csv  = [header.join(','), ...rows].join('\r\n');

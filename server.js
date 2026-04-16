@@ -92,13 +92,22 @@ function mapBeneficiario(row) {
     estatus:         row.estatus,
     tipoBaja:        row.tipo_baja   || '',
     montoAutorizado: parseFloat(row.monto_autorizado) || 0,
-    montoDerogado:   parseFloat(row.monto_derogado)   || 0,
-    chequeFecha:     row.cheque_fecha
-                       ? new Date(row.cheque_fecha).toISOString().slice(0, 10)
-                       : '',
-    chequeCantidad:  parseFloat(row.cheque_cantidad) || 0,
-    chequeFolio:     row.cheque_folio || ''
+    montoDerogado:   parseFloat(row.monto_derogado)   || 0
   };
+}
+
+/* Recalcula monto_derogado como suma de cheques y actualiza la tabla */
+async function recalcularMontoDerogado(beneficiarioId) {
+  const [rows] = await pool.query(
+    'SELECT COALESCE(SUM(cantidad), 0) AS total FROM cheques WHERE beneficiario_id = ?',
+    [beneficiarioId]
+  );
+  const total = parseFloat(rows[0].total) || 0;
+  await pool.query(
+    'UPDATE beneficiarios SET monto_derogado = ? WHERE id = ?',
+    [total, beneficiarioId]
+  );
+  return total;
 }
 
 /* ============================================================
@@ -223,7 +232,10 @@ app.get('/api/beneficiarios', auth, async (req, res) => {
 
 // POST — admin u operativo pueden registrar nuevos beneficiarios
 app.post('/api/beneficiarios', auth, canEditRecords, async (req, res) => {
-  const b = req.body;
+  const b   = req.body;
+  const rol = req.user.rol;
+  // Solo admin puede fijar el monto autorizado al registrar
+  const montoAutorizado = (rol === 'admin') ? (parseFloat(b.montoAutorizado) || 0) : 0;
   try {
     const [result] = await pool.query(
       `INSERT INTO beneficiarios
@@ -235,7 +247,7 @@ app.post('/api/beneficiarios', auth, canEditRecords, async (req, res) => {
         b.folio, b.nombre, b.curp, b.correo || '',
         b.telAlumno || '', b.telFam1 || '', b.telFam2 || '',
         b.tipo, b.estatus, b.tipoBaja || '',
-        0, 0, null, 0, ''   // operativo no puede poner montos al registrar
+        montoAutorizado, 0, null, 0, ''
       ]
     );
     const [rows] = await pool.query('SELECT * FROM beneficiarios WHERE id = ?', [result.insertId]);
@@ -278,32 +290,23 @@ app.put('/api/beneficiarios/:id', auth, async (req, res) => {
         ]
       );
     } else if (rol === 'financiero') {
-      // Solo actualiza campos económicos
+      // Solo actualiza monto_autorizado (monto_derogado se calcula automáticamente de cheques)
       await pool.query(
-        `UPDATE beneficiarios SET
-           monto_autorizado=?, monto_derogado=?,
-           cheque_fecha=?, cheque_cantidad=?, cheque_folio=?
-         WHERE id=?`,
-        [
-          b.montoAutorizado || 0, b.montoDerogado || 0,
-          b.chequeFecha || null, b.chequeCantidad || 0, b.chequeFolio || '',
-          id
-        ]
+        `UPDATE beneficiarios SET monto_autorizado=? WHERE id=?`,
+        [b.montoAutorizado || 0, id]
       );
     } else {
-      // admin — actualiza todo
+      // admin — actualiza todo menos monto_derogado (calculado de cheques)
       await pool.query(
         `UPDATE beneficiarios SET
            nombre=?, curp=?, correo=?, tel_alumno=?, tel_fam1=?, tel_fam2=?,
            tipo=?, estatus=?, tipo_baja=?,
-           monto_autorizado=?, monto_derogado=?,
-           cheque_fecha=?, cheque_cantidad=?, cheque_folio=?
+           monto_autorizado=?
          WHERE id=?`,
         [
           b.nombre, b.curp, b.correo || '', b.telAlumno || '', b.telFam1 || '', b.telFam2 || '',
           b.tipo, b.estatus, b.tipoBaja || '',
-          b.montoAutorizado || 0, b.montoDerogado || 0,
-          b.chequeFecha || null, b.chequeCantidad || 0, b.chequeFolio || '',
+          b.montoAutorizado || 0,
           id
         ]
       );
@@ -319,6 +322,73 @@ app.put('/api/beneficiarios/:id', auth, async (req, res) => {
 });
 
 /* ============================================================
+   RUTAS — CHEQUES
+   ============================================================ */
+
+// GET — lista cheques de un beneficiario (todos los roles)
+app.get('/api/beneficiarios/:id/cheques', auth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM cheques WHERE beneficiario_id = ? ORDER BY fecha ASC, id ASC',
+      [id]
+    );
+    res.json(rows.map(r => ({
+      id:       r.id,
+      fecha:    r.fecha ? new Date(r.fecha).toISOString().slice(0, 10) : '',
+      cantidad: parseFloat(r.cantidad) || 0,
+      folio:    r.folio || ''
+    })));
+  } catch (err) {
+    console.error('Cheques GET error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST — agrega un cheque y recalcula monto_derogado (financiero y admin)
+app.post('/api/beneficiarios/:id/cheques', auth, canFinancial, async (req, res) => {
+  const beneficiarioId = parseInt(req.params.id);
+  const { fecha, cantidad, folio } = req.body;
+  try {
+    const [check] = await pool.query('SELECT id, monto_autorizado, monto_derogado FROM beneficiarios WHERE id = ?', [beneficiarioId]);
+    if (!check.length) return res.status(404).json({ error: 'Beneficiario no encontrado' });
+
+    const montoAutorizado = parseFloat(check[0].monto_autorizado) || 0;
+    const montoDerogado   = parseFloat(check[0].monto_derogado)   || 0;
+    const nuevaCantidad   = parseFloat(cantidad) || 0;
+    if (montoAutorizado > 0 && montoDerogado + nuevaCantidad > montoAutorizado) {
+      return res.status(400).json({
+        error: `El total de cheques excedería el monto autorizado. Disponible: $${(montoAutorizado - montoDerogado).toFixed(2)}`
+      });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO cheques (beneficiario_id, fecha, cantidad, folio) VALUES (?, ?, ?, ?)',
+      [beneficiarioId, fecha || null, parseFloat(cantidad) || 0, folio || '']
+    );
+    const nuevoMontoDerogado = await recalcularMontoDerogado(beneficiarioId);
+    const [rows] = await pool.query('SELECT * FROM cheques WHERE id = ?', [result.insertId]);
+    res.status(201).json({
+      cheque: {
+        id:       rows[0].id,
+        fecha:    rows[0].fecha ? new Date(rows[0].fecha).toISOString().slice(0, 10) : '',
+        cantidad: parseFloat(rows[0].cantidad) || 0,
+        folio:    rows[0].folio || ''
+      },
+      montoDerogado: nuevoMontoDerogado
+    });
+  } catch (err) {
+    console.error('Cheques POST error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE — eliminación de cheques deshabilitada
+app.delete('/api/cheques/:id', auth, (req, res) => {
+  res.status(403).json({ error: 'La eliminación de cheques no está permitida.' });
+});
+
+/* ============================================================
    FALLBACK
    ============================================================ */
 app.get('*', (req, res) => {
@@ -328,7 +398,26 @@ app.get('*', (req, res) => {
 /* ============================================================
    INICIO DEL SERVIDOR
    ============================================================ */
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  // Crea la tabla cheques si no existe (migración automática)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cheques (
+        id               INT AUTO_INCREMENT PRIMARY KEY,
+        beneficiario_id  INT NOT NULL,
+        fecha            DATE          DEFAULT NULL,
+        cantidad         DECIMAL(10,2) DEFAULT 0.00,
+        folio            VARCHAR(50)   DEFAULT '',
+        creado_en        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_cheque_benef
+          FOREIGN KEY (beneficiario_id) REFERENCES beneficiarios(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('✓ Tabla cheques verificada.');
+  } catch (err) {
+    console.error('Error al verificar tabla cheques:', err.message);
+  }
+
   console.log(`\nServidor corriendo en http://localhost:${PORT}`);
   console.log('Presiona Ctrl+C para detenerlo.\n');
 });

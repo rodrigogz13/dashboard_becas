@@ -63,3 +63,19 @@ CREATE TABLE IF NOT EXISTS beneficiarios (
   creado_en         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   actualizado_en    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
+
+-- ────────────────────────────────────────────────────────────
+-- CHEQUES (múltiples por beneficiario)
+-- Ejecutar también en instalaciones existentes:
+--   CREATE TABLE IF NOT EXISTS cheques (...) ENGINE=InnoDB;
+-- ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS cheques (
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  beneficiario_id  INT NOT NULL,
+  fecha            DATE          DEFAULT NULL,
+  cantidad         DECIMAL(10,2) DEFAULT 0.00,
+  folio            VARCHAR(50)   DEFAULT '',
+  creado_en        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_cheque_benef
+    FOREIGN KEY (beneficiario_id) REFERENCES beneficiarios(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
