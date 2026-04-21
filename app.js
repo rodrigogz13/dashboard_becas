@@ -1,12 +1,12 @@
 /* ============================================================
    CONSTANTS
    ============================================================ */
-const TIPOS = ['Nuevo ingreso', 'Carrera Trunca', 'Carrera Inconclusa', 'Titulación', 'Titulación Posgrado'];
+const TIPOS = ['Nuevo ingreso', 'Carrera Trunca', 'Continuidad', 'Titulación', 'Titulación Posgrado'];
 
 const TYPE_CODES = {
   'Nuevo ingreso':       'NI',
   'Carrera Trunca':      'CT',
-  'Carrera Inconclusa':  'CI',
+  'Continuidad':  'CI',
   'Titulación':          'TI',
   'Titulación Posgrado': 'TP'
 };
@@ -14,7 +14,7 @@ const TYPE_CODES = {
 const TIPO_COLORS = {
   'Nuevo ingreso':       '#10b981',
   'Carrera Trunca':      '#f59e0b',
-  'Carrera Inconclusa':  '#ef4444',
+  'Continuidad':  '#ef4444',
   'Titulación':          '#3b82f6',
   'Titulación Posgrado': '#8b5cf6'
 };

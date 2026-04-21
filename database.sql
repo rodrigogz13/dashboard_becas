@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS beneficiarios (
   tipo              ENUM(
                       'Nuevo ingreso',
                       'Carrera Trunca',
-                      'Carrera Inconclusa',
+                      'Continuidad',
                       'Titulación',
                       'Titulación Posgrado'
                     ) NOT NULL,
